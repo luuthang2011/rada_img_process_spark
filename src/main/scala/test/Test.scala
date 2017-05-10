@@ -1,6 +1,6 @@
 package test
 
-import pack.Main
+/*import pack.Main*/
 
 import scala.util.Sorting
 
