@@ -114,6 +114,8 @@ object Main {
         val resultRdd: RDD[Double] = rddMerge.map(e => {
             e._1 * cd + (1 - cd) * e._2
         })
+
+
         return resultRdd
     }
 
@@ -175,170 +177,64 @@ object Main {
     }
 
     def main(args: Array[String]): Unit = {
-
-
-
-
-
         val configSp: SparkConf = new SparkConf().setAppName("Simple App")
         val sparkContext: SparkContext = new SparkContext(configSp)
 
-        val textFile: RDD[String] = sparkContext.textFile("/data/IMAGERY.TIF_0_4096.csv")
-        val allLineRdd: RDD[String] = textFile.filter(line => {
-            if (line.length == 1 || line.length == 0 || line.length < 2000) false
-            else true
-        })
-        val allNumberRdd: RDD[String] = allLineRdd.flatMap(line => line.split(","))
-        allNumberRdd.persist()
+
+        val arrFileName= Array[String]("IMAGERY.TIF_0_1024.csv",
+            "IMAGERY.TIF_0_2048.csv","IMAGERY.TIF_0_3072.csv",
+            "IMAGERY.TIF_0_4096.csv", "IMAGERY.TIF_0_5120.csv",
+            "IMAGERY.TIF_0_6144.csv", "IMAGERY.TIF_0_8192.csv",
+        "IMAGERY.TIF_1024_0.csv", "IMAGERY.TIF_1024_1024.csv", "IMAGERY.TIF_1024_2048.csv")
 
 
-        val resultRdd:RDD[Double]= processAllData(allNumberRdd, sparkContext)
+        val arrayBufferTextFile:ArrayBuffer[RDD[String]]= new ArrayBuffer[RDD[String]]()
 
-
-
-
-        //can process a img 1024*1024, how about multiple ??
-        // need rebroadcast
-
-
-       /* val threshold_1: Double = 0.9
-        val threshold_2: Double = 0.99
-
-        var f1: Int = 0
-        var f2: Int = 0
-
-        val sizeWin: Int = 3
-
-        val configSp: SparkConf = new SparkConf().setAppName("Simple App")
-        val sparkContext: SparkContext = new SparkContext(configSp)
-        val textFile: RDD[String] = sparkContext.textFile("/data/IMAGERY.TIF_0_4096.csv")
-        val allLineRdd: RDD[String] = textFile.filter(line => {
-            if (line.length == 1 || line.length == 0 || line.length < 2000) false
-            else true
-        })
-        val allNumberRdd: RDD[String] = allLineRdd.flatMap(line => line.split(","))
-        allNumberRdd.persist()
-
-        /*val arrayAllNumSize:Array[Int]= Array[Int](allNumberRdd.count().toInt)
-        sparkContext.parallelize(arrayAllNumSize).saveAsTextFile("/allNumberSize")*/
-
-        val histogramRdd: RDD[(String, Int)] = calHistogram(allNumberRdd)
-        //histogramRdd.saveAsTextFile("/histogram")
-
-
-
-
-        //histogramRdd.saveAsTextFile("/histogram1")
-
-        //those variale had return for driver program, collect() called
-        // those variable cannot be used in rdd operation, because it is not available for all executors
-        // so you should broadcast it to all executors
-        val allNumberArr: Array[String] = allNumberRdd.collect()
-        //at here, histogram had been sorted
-        val histogramArr: Array[(String, Int)] = histogramRdd.collect()
-
-        //sort
-        Sorting.stableSort(histogramArr, (h1: (String, Int), h2: (String, Int)) => {
-            h1._1.toInt > h2._1.toInt
+        arrFileName.foreach(fileName => {
+            arrayBufferTextFile.append(sparkContext.textFile("/data/"+fileName))
         })
 
-        sparkContext.parallelize(histogramArr).saveAsTextFile("/histogramArrSorted")
+        //val allTextFile:RDD[RDD[String]]= sparkContext.parallelize(arrayBufferTextFile)
 
-        val mapHistogram: mutable.HashMap[String, Int] = new mutable.HashMap[String, Int]()
-        histogramArr.foreach(t => {
-            mapHistogram.put(t._1, t._2)
+
+        var i=0
+
+        arrayBufferTextFile.foreach(textFile=>{
+            /*textFile.saveAsTextFile("/text"+i)
+            i+=1*/
+
+            val lineFiltered:RDD[String]= textFile.filter(line=>{
+                if (line.length == 1 || line.length == 0 || line.length < 2000) false
+                else true
+            })
+            val allNumberRdd:RDD[String]= lineFiltered.flatMap(line=>{
+                line.split(",")
+            })
+            val rddRes:RDD[Double]= processAllData(allNumberRdd, sparkContext)
+            rddRes.saveAsTextFile("/res"+ i)
+            i+=1
         })
 
-        val arrKeysHistogram: Array[String] = histogramArr.map(t => t._1)
 
-        var m = 0
-        var totalPixel_1 = 0
-        // m at 0.90
-        while (m < arrKeysHistogram.length - 1 && totalPixel_1 <= threshold_1 * 1024 * 1024) {
-            totalPixel_1 += mapHistogram(arrKeysHistogram(m))
-            m += 1
-        }
-        var totalPixel_2 = 0
-        var n = 0
-        // n at 0.99
-        while (n < arrKeysHistogram.length - 1 && totalPixel_2 <= threshold_2 * 1024 * 1024) {
-            totalPixel_2 += mapHistogram(arrKeysHistogram(n))
-            n += 1
-        }
-        val cm = m + 1.0
-        val ce = n + 1.0
-        val cd = cm / ce
-
-
-        //calculate intensity
-        val intensityArray: Array[Double] = allNumberArr.map(value => {
-            if (mapHistogram.get(value).isEmpty) {
-                0.0
-            } else {
-                mapHistogram(value) / (1024 * 1024.0)
-            }
-        })
-        val iteratorArr: Iterator[Array[String]] = allNumberArr.grouped(1024)
-        val tmpArr2D: Array[Array[String]] = iteratorArr.toArray
-        val arr2D = tmpArr2D.filter(arr => {
-            if (arr.length != 1024) false
-            else true
-        })
-        val arrayBufferFilter: ArrayBuffer[Double] = new ArrayBuffer[Double]()
-        val arrayIndexOutOfBoundsException: ArrayBuffer[(Int, Int)] = new ArrayBuffer[(Int, Int)]()
-        val arrayNumFormatException: ArrayBuffer[(Int, Int)] = new ArrayBuffer[(Int, Int)]()
-
-
-        //calculate filter
-        for (i <- 0 to arr2D.length - 1) {
-            for (j <- 0 to arr2D(0).length - 1) {
-                try {
-                    val tmpNum: Double = arr2D(i)(j).toDouble
-                    val surroundCells = calSubArrayFrom2DArray(sizeWin, i, j, arr2D)
-                    val standardDeviation = calStandardDeviation(surroundCells)
-                    if (standardDeviation.equals(0.0)) {
-                        arrayBufferFilter.append(0)
-                    } else {
-                        arrayBufferFilter.append(tmpNum / standardDeviation)
-                    }
-                } catch {
-                    case a: NumberFormatException => {
-                        arrayNumFormatException.append((i, j))
-                        arrayBufferFilter.append(0.0)
-                    }
-                    case b: IndexOutOfBoundsException => {
-                        arrayBufferFilter.append(0.0)
-                        arrayIndexOutOfBoundsException.append((i, j))
-                    }
-                }
-
-            }
-        }
-
-
-        val filterArr: Array[Double] = arrayBufferFilter.toArray
-        val rddFilter: RDD[Double] = sparkContext.parallelize(filterArr)
-        rddFilter.saveAsTextFile("/rddFilter")
-        val rddErr: RDD[(Int, Int)] = sparkContext.parallelize(arrayIndexOutOfBoundsException)
-        rddErr.saveAsTextFile("/err")
-        //sparkContext.parallelize(arrayIndexOutOfBoundsException).saveAsTextFile("/outBoundEx")
-        //sparkContext.parallelize(arrayNumFormatException).saveAsTextFile("/numformatEx")
-        sparkContext.parallelize(intensityArray).saveAsTextFile("/intensity")
-
-
-        val arrBufferMerge: ArrayBuffer[(Double, Double)] = new ArrayBuffer[(Double, Double)]()
-        for (i <- 0 to filterArr.length - 1) {
-            arrBufferMerge.append((intensityArray(i), filterArr(i)))
-        }
-        val rddMerge: RDD[(Double, Double)] = sparkContext.parallelize(arrBufferMerge)
-
-
-        val resultRdd: RDD[Double] = rddMerge.map(e => {
-            e._1 * cd + (1 - cd) * e._2
+        /*val allResult:RDD[RDD[Double]]= allTextFile.map(textFile => {
+            val lineFiltered:RDD[String]= textFile.filter(line=>{
+                if (line.length == 1 || line.length == 0 || line.length < 2000) false
+                else true
+            })
+            val allNumberRdd:RDD[String]= lineFiltered.flatMap(line=>{
+                line.split(",")
+            })
+            processAllData(allNumberRdd, sparkContext)
         })
 
-        resultRdd.saveAsTextFile("/rddResult")
-        allNumberRdd.unpersist()*/
+        var i=0
+
+        allResult.foreach(result =>{
+            result.saveAsTextFile("/data/"+ i.toString)
+            i=i+1
+        })*/
+
+
 
     }
 }
