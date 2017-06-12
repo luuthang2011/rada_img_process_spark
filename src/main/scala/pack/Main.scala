@@ -23,14 +23,21 @@ object Main {
         val histogramRdd: RDD[(String, Int)] = calHistogram(allNumberRdd)
 
         // allNumberRdd is array contain about 1M element
+
         val allNumberArr: Array[String] = allNumberRdd.collect()
-        //at here, histogram had been sorted
+
+
+
+        //at here, histogram had not been sorted
         val histogramArr: Array[(String, Int)] = histogramRdd.collect()
+        histogramRdd.unpersist(true)
 
         //sort histogram arr
         Sorting.stableSort(histogramArr, (h1: (String, Int), h2: (String, Int)) => {
             h1._1.toInt > h2._1.toInt
         })
+
+        // convert arrHistogram to hashMap
         val mapHistogram: mutable.HashMap[String, Int] = new mutable.HashMap[String, Int]()
         histogramArr.foreach(t => {
             mapHistogram.put(t._1, t._2)
@@ -56,6 +63,30 @@ object Main {
         val ce = n + 1.0
         val cd = cm / ce
 
+
+        // refactor to parallelize computation, use broadcast variable
+
+
+
+
+
+        val mapHistogramBroadcast= sparkContext.broadcast(mapHistogram);
+
+
+        // calculate intensity parallelize
+        val intensityRdd:RDD[Double]= allNumberRdd.map(numberString=>{
+            //val value= numberString.toDouble
+            if(mapHistogramBroadcast.value.get(numberString).isEmpty)
+                0.0
+            else{
+                mapHistogramBroadcast.value(numberString)/(1024*1024.0)
+            }
+        })
+
+
+
+
+
         val intensityArray: Array[Double] = allNumberArr.map(value => {
             if (mapHistogram.get(value).isEmpty) {
                 0.0
@@ -75,6 +106,10 @@ object Main {
 
 
         //calculate filter
+        // need to refactor to parallelize computation, 
+
+        // use a class to Point (val, rowIndex, collumnIndex to make a RDD[point]) and map it to calculate filter
+
         for (i <- 0 to arr2D.length - 1) {
             for (j <- 0 to arr2D(0).length - 1) {
                 try {
@@ -177,10 +212,24 @@ object Main {
     }
 
     def main(args: Array[String]): Unit = {
+
+
+        // sparkContext is metadata about spark cluster
         val configSp: SparkConf = new SparkConf().setAppName("Simple App")
         val sparkContext: SparkContext = new SparkContext(configSp)
 
 
+        // hadoop configuration
+        val hdfsPrefix:String= "hdfs://"
+        val hadoopNameNodeAddress:String ="192.168.0.108"
+        val portHadoop:Int= 9000
+
+
+        val hadoopUrl:String= hdfsPrefix +  hadoopNameNodeAddress+ ":"+ portHadoop
+
+
+
+        // todo : need refactor
         val arrFileName= Array[String]("IMAGERY.TIF_0_1024.csv",
             "IMAGERY.TIF_0_2048.csv","IMAGERY.TIF_0_3072.csv",
             "IMAGERY.TIF_0_4096.csv", "IMAGERY.TIF_0_5120.csv",
@@ -188,10 +237,16 @@ object Main {
         "IMAGERY.TIF_1024_0.csv", "IMAGERY.TIF_1024_1024.csv", "IMAGERY.TIF_1024_2048.csv")
 
 
+        // this array contain all rdd[String]
         val arrayBufferTextFile:ArrayBuffer[RDD[String]]= new ArrayBuffer[RDD[String]]()
 
+        //
         arrFileName.foreach(fileName => {
-            arrayBufferTextFile.append(sparkContext.textFile("/data/"+fileName))
+
+            // each element is a line in source file
+            val currentTextFile:RDD[String]= sparkContext.textFile(hadoopUrl + "/data/"+fileName)
+
+            arrayBufferTextFile.append(currentTextFile)
         })
 
         //val allTextFile:RDD[RDD[String]]= sparkContext.parallelize(arrayBufferTextFile)
@@ -203,15 +258,19 @@ object Main {
             /*textFile.saveAsTextFile("/text"+i)
             i+=1*/
 
+            //todo : need fix, add data
             val lineFiltered:RDD[String]= textFile.filter(line=>{
                 if (line.length == 1 || line.length == 0 || line.length < 2000) false
                 else true
             })
+
+
+            // this variable contain 1024^2 elements
             val allNumberRdd:RDD[String]= lineFiltered.flatMap(line=>{
                 line.split(",")
             })
             val rddRes:RDD[Double]= processAllData(allNumberRdd, sparkContext)
-            rddRes.saveAsTextFile("/res"+ i)
+            rddRes.saveAsTextFile( hadoopUrl + "/res"+ i)
             i+=1
         })
 
